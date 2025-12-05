@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>لوحة تحكم الطلبات — Mishkat</title>
+<style>
+  *{box-sizing:border-box;font-family: 'Segoe UI', Tahoma, Arial, sans-serif}
+  body{margin:0;background:#f3f5fb;padding:18px;color:#0b1220}
+  header{background:linear-gradient(90deg,#5b21b6,#7c3aed);color:#fff;padding:14px;border-radius:10px}
+  main{max-width:1100px;margin:16px auto}
+  table{width:100%;border-collapse:collapse;margin-top:14px;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 10px 30px rgba(15,23,42,0.06)}
+  th,td{padding:12px;border-bottom:1px solid #f0f0f5;text-align:right}
+  th{background:#4c1d95;color:#fff}
+  tr.new{animation:highlight 1s ease-in-out;background:#f0fff4}
+  @keyframes highlight{from{background:#fff59d}to{background:#f0fff4}}
+  .actions button{margin-left:8px;padding:8px 12px;border-radius:8px;border:none;cursor:pointer}
+  .done{background:#10b981;color:#fff}
+  .del{background:#ef4444;color:#fff}
+  .meta{font-size:13px;color:#6b7280}
+  .topbar{display:flex;gap:8px;align-items:center;justify-content:flex-start;margin-top:12px}
+  .smallbtn{background:#fff;padding:8px 12px;border-radius:10px;border:1px solid #e6e6f0;cursor:pointer}
+</style>
+</head>
+<body>
+<header>
+  <h2 style="margin:0">لوحة تحكم الطلبات — Mishkat Coffee</h2>
+  <div class="meta" style="margin-top:6px">الطلبات تظهر لحظياً. اضغط 'تم' لإزالة الطلب بعد التجهيز.</div>
+</header>
+
+<main>
+  <div class="topbar">
+    <button class="smallbtn" id="enableSound">Enable Notifications (تفعيل الصوت)</button>
+    <div style="color:#6b7280;font-size:14px">انقر لتفعيل الصوت — مطلوب مرة واحدة للسماح بتشغيل إشعارات عند وصول طلب.</div>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>رقم الطلب</th><th>الاسم</th><th>الطلب</th><th>تفضيلات</th><th>ملاحظات</th><th>الوقت</th><th>إجراءات</th></tr>
+    </thead>
+    <tbody id="ordersBody"></tbody>
+  </table>
+</main>
+
+<!-- notify sound -->
+<audio id="notifySound">
+  <source src="https://notificationsounds.com/storage/sounds/file-sounds-1152-pristine.mp3" type="audio/mpeg">
+</audio>
+
+<!-- Firebase v8 -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+<script>
+/* Firebase config */
+var firebaseConfig = {
+  apiKey: "AIzaSyBA8y6Z3CzA0v3UkLG03eOowcCBSwVm4Hk",
+  authDomain: "mishkat-coffee.firebaseapp.com",
+  databaseURL: "https://mishkat-coffee-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "mishkat-coffee",
+  storageBucket: "mishkat-coffee.firebasestorage.app",
+  messagingSenderId: "1044002917128",
+  appId: "1:1044002917128:web:947c927e9ff26538e17abd"
+};
+firebase.initializeApp(firebaseConfig);
+var db = firebase.database();
+
+const ordersBody = document.getElementById('ordersBody');
+const notifySound = document.getElementById('notifySound');
+let soundEnabled = false;
+
+// Enable sound button (user gesture to allow audio)
+document.getElementById('enableSound').addEventListener('click', ()=>{
+  soundEnabled = true;
+  notifySound.currentTime = 0;
+  notifySound.play().catch(()=>{ /* block if prevented */ });
+  alert('تم تفعيل الصوت — Notifications enabled');
+});
+
+// listen for new orders
+db.ref('orders').on('child_added', snapshot => {
+  const key = snapshot.key;
+  const data = snapshot.val();
+  addOrderRow(key, data, true);
+});
+
+// also listen for removals to remove row
+db.ref('orders').on('child_removed', snapshot => {
+  const key = snapshot.key;
+  const row = document.querySelector(`[data-key="${key}"]`);
+  if(row) row.remove();
+});
+
+function addOrderRow(key, data, isNew){
+  const tr = document.createElement('tr');
+  tr.dataset.key = key;
+  if(isNew) tr.classList.add('new');
+
+  const itemsText = (data.items || []).map(i=>escapeHtml(i.name)).join(' ، ');
+  const prefsText = (data.prefs || []).map(p=>escapeHtml(p)).join(' ، ');
+
+  tr.innerHTML = `
+    <td>${escapeHtml(data.orderNum)}</td>
+    <td>${escapeHtml(data.name)}</td>
+    <td>${itemsText}</td>
+    <td>${prefsText}</td>
+    <td>${escapeHtml(data.notes || '')}</td>
+    <td>${escapeHtml(data.time)}</td>
+    <td class="actions">
+      <button class="done" onclick="markDone('${key}', this)">تم</button>
+      <button class="del" onclick="removeOrder('${key}', this)">حذف</button>
+    </td>
+  `;
+
+  ordersBody.prepend(tr);
+
+  // play sound if user enabled, otherwise try once (may be blocked)
+  if(soundEnabled){
+    notifySound.currentTime = 0; notifySound.play().catch(()=>{});
+  } else {
+    // try to play once (may be blocked)
+    notifySound.currentTime = 0; notifySound.play().catch(()=>{ /* will be blocked until user clicks enable */ });
+  }
+}
+
+function markDone(key, btn){
+  btn.disabled = true;
+  db.ref('orders/' + key).remove().catch(e=>{ console.error(e); btn.disabled = false; });
+}
+function removeOrder(key, btn){
+  if(!confirm('هل تريد حذف هذا الطلب؟')) return;
+  btn.disabled = true;
+  db.ref('orders/' + key).remove().catch(e=>{ console.error(e); btn.disabled = false; });
+}
+
+function escapeHtml(s){ if(!s) return ''; return String(s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+</script>
+</body>
+</html>
